@@ -161,4 +161,75 @@ test.describe("Page load smoke tests", () => {
     await expect(page.getByText("Workflow Workbench")).toBeVisible();
     await expect(page.getByText("Workflow Name")).toBeVisible();
   });
+
+  test("Integrations route loads", async ({ page }) => {
+    await mockCommonApis(page);
+    await page.goto("/integrations");
+    await expect(
+      page.getByRole("heading", { name: "Integrations" })
+    ).toBeVisible();
+    await expect(page.getByText("Google Drive Read")).toBeVisible();
+    await expect(page.getByText("read_g_drive")).toBeVisible();
+    await expect(page.getByText("GDRIVE_READ")).toBeVisible();
+    await expect(page.getByLabel("OAuth Client ID")).toBeVisible();
+    await expect(page.getByLabel("OAuth Client Secret")).toBeVisible();
+    await expect(page.getByText("Upload Client JSON")).toBeVisible();
+    await expect(page.getByText("Upload OAuth Token JSON")).toBeVisible();
+    await expect(page.getByText("Generate OAuth")).toBeVisible();
+    await expect(page.getByText("Create Connection")).toBeVisible();
+  });
+
+  test("Integrations OAuth callback saves connection and creates Drive task", async ({
+    page,
+  }) => {
+    await mockCommonApis(page);
+
+    let createdTaskDefs: Array<{ inputKeys?: string[]; name?: string }> | undefined;
+    await page.route("**/api/integrations/gdrive/oauth/token", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          connectionId: "gdrive-prod",
+        }),
+      })
+    );
+    await page.route("**/api/metadata/taskdefs/read_g_drive", (route) =>
+      route.fulfill({ status: 404, body: "Not found" })
+    );
+    await page.route("**/api/metadata/taskdefs", async (route) => {
+      if (route.request().method() === "POST") {
+        createdTaskDefs = route.request().postDataJSON();
+        await route.fulfill({ status: 204, body: "" });
+      } else {
+        await route.fulfill({ path: f("metadataTasks.json") });
+      }
+    });
+
+    await page.addInitScript(() => {
+      window.sessionStorage.setItem(
+        "conductor.gdrive.oauth",
+        JSON.stringify({
+          connectionId: "gdrive-prod",
+          clientId: "client-id",
+          clientSecret: "client-secret",
+          oauthClientJson: JSON.stringify({
+            installed: {
+              client_id: "client-id",
+              client_secret: "client-secret",
+            },
+          }),
+        })
+      );
+    });
+
+    await page.goto("/integrations?code=auth-code&state=gdrive-prod");
+
+    await expect(
+      page.getByText("Google Drive connection gdrive-prod saved.")
+    ).toBeVisible();
+    expect(createdTaskDefs?.[0]?.name).toBe("read_g_drive");
+    expect(createdTaskDefs?.[0]?.inputKeys).toContain("connectionId");
+    expect(createdTaskDefs?.[0]?.inputKeys).toContain("folderIds");
+    expect(createdTaskDefs?.[0]?.inputKeys).toContain("fileIds");
+  });
 });

@@ -1540,6 +1540,76 @@ export const listFilesTaskSchema = {
   },
 };
 
+export const gDriveReadTaskSchema = {
+  $id: "/properties/tasks/gDriveReadTaskSchema",
+  type: "object",
+  description: "Google Drive read task",
+  default: {
+    name: "gdrive_read_task_ref",
+    taskReferenceName: "gdrive_read_task_ref",
+    type: TaskType.GDRIVE_READ,
+    inputParameters: {
+      connectionId: "${workflow.input.gdriveConnectionId}",
+      folderIds: [],
+      fileIds: [],
+      maxFiles: 100,
+    },
+  },
+  required: ["name", "taskReferenceName", "type", "inputParameters"],
+  properties: {
+    name: { $ref: nameSchema.$id },
+    taskReferenceName: { $ref: taskReferenceName.$id },
+    type: { const: TaskType.GDRIVE_READ },
+    inputParameters: {
+      type: "object",
+      properties: {
+        connectionId: {
+          type: "string",
+        },
+        folderIds: {
+          anyOf: [
+            {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+            {
+              type: "string",
+            },
+          ],
+        },
+        fileIds: {
+          anyOf: [
+            {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+            {
+              type: "string",
+            },
+          ],
+        },
+        folderId: {
+          type: "string",
+        },
+        maxFiles: {
+          type: "number",
+        },
+        mimeTypes: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+        },
+      },
+      additionalProperties: true,
+    },
+  },
+};
+
 export const parseDocumentTaskSchema = {
   $id: "/properties/tasks/parseDocumentTaskSchema",
   type: "object",
@@ -1614,6 +1684,7 @@ export const tasksItemsSchema = {
       { $ref: chunkTextTaskSchema.$id },
       { $ref: listFilesTaskSchema.$id },
       { $ref: parseDocumentTaskSchema.$id },
+      { $ref: gDriveReadTaskSchema.$id },
     ],
   },
 };
@@ -1676,6 +1747,9 @@ export const schemasByType = {
   [TaskType.CHUNK_TEXT]: chunkTextTaskSchema,
   [TaskType.LIST_FILES]: listFilesTaskSchema,
   [TaskType.PARSE_DOCUMENT]: parseDocumentTaskSchema,
+  [TaskType.GDRIVE_READ]: gDriveReadTaskSchema,
+  [TaskType.GEMINI_LLM]: genericSchema,
+  [TaskType.GRN_POD_RECONCILE]: genericSchema,
 };
 
 // Object.values(TaskType)
@@ -1829,6 +1903,7 @@ export const workflowDefinitionSchemaWithDeps = [
   chunkTextTaskSchema,
   listFilesTaskSchema,
   parseDocumentTaskSchema,
+  gDriveReadTaskSchema,
   // workflow must be at the end, because it wraps another schemas
   workflowSchema,
 ];

@@ -568,6 +568,43 @@ export interface ParseDocumentTaskDef extends CommonTaskDef {
   };
 }
 
+export interface GDriveReadTaskDef extends CommonTaskDef {
+  type: TaskType.GDRIVE_READ;
+  inputParameters: {
+    connectionId: string;
+    folderId?: string;
+    folderIds?: string | string[];
+    fileIds?: string | string[];
+    maxFiles?: number;
+    mimeTypes?: string[];
+  };
+}
+
+export interface GeminiLlmTaskDef extends CommonTaskDef {
+  type: TaskType.GEMINI_LLM;
+  inputParameters: {
+    connectionId?: string;
+    gdriveConnectionId?: string;
+    promptname?: string;
+    promptName?: string;
+    prompt?: string;
+    apiKey?: string;
+    model?: string;
+    documents?: unknown;
+    files?: unknown;
+    jsonOutput?: boolean;
+  };
+}
+
+export interface GrnPodReconcileTaskDef extends CommonTaskDef {
+  type: TaskType.GRN_POD_RECONCILE;
+  inputParameters: {
+    records?: unknown;
+    grnList?: unknown;
+    podList?: unknown;
+  };
+}
+
 export type LLMTaskTypes =
   | LLMGenerateEmbeddings
   | LLMGetEmbeddings
@@ -576,7 +613,8 @@ export type LLMTaskTypes =
   | LLMIndexText
   | GetDocumentTaskDef
   | LLMTextCompleteTaskDef
-  | LLMChatComplete;
+  | LLMChatComplete
+  | GeminiLlmTaskDef;
 
 export type FormTaskType =
   | TaskType.WAIT
@@ -623,4 +661,7 @@ export type FormTaskType =
   | TaskType.INTEGRATION
   | TaskType.CHUNK_TEXT
   | TaskType.LIST_FILES
-  | TaskType.PARSE_DOCUMENT;
+  | TaskType.PARSE_DOCUMENT
+  | TaskType.GDRIVE_READ
+  | TaskType.GEMINI_LLM
+  | TaskType.GRN_POD_RECONCILE;

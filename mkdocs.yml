@@ -81,6 +81,9 @@ nav:
       - documentation/api/eventhandlers.md
       - documentation/api/taskdomains.md
       - documentation/api/scheduler.md
+    - Integrations:
+      - Google Drive: documentation/integrations/gdrive/README.md
+      - Google Drive Connection Architecture: documentation/integrations/gdrive/connection-management-document-ingestion.md
     - Workflow Definition:
       - documentation/configuration/workflowdef/index.md
     - System Tasks:

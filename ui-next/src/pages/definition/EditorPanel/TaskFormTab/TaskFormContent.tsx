@@ -10,8 +10,11 @@ import {
   DynamicForkOperatorForm,
   DynamicOperatorForm,
   EventTaskForm,
+  GDriveReadTaskForm,
+  GeminiLlmTaskForm,
   GetSignedJwtForm,
   GetWorkflowTaskForm,
+  GrnPodReconcileTaskForm,
   HTTPPollTaskForm,
   HTTPTaskForm,
   INLINETaskForm,
@@ -98,6 +101,12 @@ const getTaskForm = (type: string) => {
       return GetSignedJwtForm;
     case TaskType.UPDATE_TASK:
       return UpdateTaskForm;
+    case TaskType.GDRIVE_READ:
+      return GDriveReadTaskForm;
+    case TaskType.GEMINI_LLM:
+      return GeminiLlmTaskForm;
+    case TaskType.GRN_POD_RECONCILE:
+      return GrnPodReconcileTaskForm;
     case TaskType.INTEGRATION:
       return MCPTaskForm;
 

@@ -54,6 +54,9 @@ import {
   ChunkTextTaskDef,
   ListFilesTaskDef,
   ParseDocumentTaskDef,
+  GDriveReadTaskDef,
+  GeminiLlmTaskDef,
+  GrnPodReconcileTaskDef,
 } from "types";
 import { HTTP_TEST_ENDPOINT } from "utils/constants/common";
 import { BaseTaskMenuItem } from "./state/types";
@@ -726,6 +729,53 @@ export const generateListFilesTask: GenerateTaskFn<ListFilesTaskDef> = ({
   ...overrides,
 });
 
+export const generateGDriveReadTask: GenerateTaskFn<GDriveReadTaskDef> = ({
+  overrides = {},
+  nameGenerator = generateNameAndTaskReference,
+} = DEFAULT_ARGS): GDriveReadTaskDef => ({
+  ...nameGenerator("gdrive_read"),
+  type: TaskType.GDRIVE_READ,
+  inputParameters: {
+    connectionId: "${workflow.input.gdriveConnectionId}",
+    folderIds: [],
+    fileIds: [],
+    maxFiles: 100,
+  },
+  ...overrides,
+});
+
+export const generateGeminiLlmTask: GenerateTaskFn<GeminiLlmTaskDef> = ({
+  overrides = {},
+  nameGenerator = generateNameAndTaskReference,
+} = DEFAULT_ARGS): GeminiLlmTaskDef => ({
+  ...nameGenerator("gemini_llm"),
+  type: TaskType.GEMINI_LLM,
+  inputParameters: {
+    connectionId: "${workflow.input.geminiConnectionId}",
+    promptname: "select j2",
+    prompt: "paste your prompt here",
+    model: "gemini-2.5-flash",
+    files: "${read_g_drive_ref.output.files}",
+    jsonOutput: true,
+  },
+  ...overrides,
+});
+
+export const generateGrnPodReconcileTask: GenerateTaskFn<
+  GrnPodReconcileTaskDef
+> = ({
+  overrides = {},
+  nameGenerator = generateNameAndTaskReference,
+} = DEFAULT_ARGS): GrnPodReconcileTaskDef => ({
+  ...nameGenerator("grn_pod_reconcile"),
+  type: TaskType.GRN_POD_RECONCILE,
+  inputParameters: {
+    grnList: "${workflow.input.grnList}",
+    podList: "${workflow.input.podList}",
+  },
+  ...overrides,
+});
+
 export const taskGeneratorMap = {
   [TaskType.WAIT]: generateWaitTask,
   [TaskType.HTTP]: generateHTTPTask,
@@ -776,6 +826,9 @@ export const taskGeneratorMap = {
   [TaskType.CHUNK_TEXT]: generateChunkTextTask,
   [TaskType.LIST_FILES]: generateListFilesTask,
   [TaskType.PARSE_DOCUMENT]: generateParseDocumentTask,
+  [TaskType.GDRIVE_READ]: generateGDriveReadTask,
+  [TaskType.GEMINI_LLM]: generateGeminiLlmTask,
+  [TaskType.GRN_POD_RECONCILE]: generateGrnPodReconcileTask,
 } satisfies Record<FormTaskType, GenerateTaskFn<any>>;
 
 export const uniqueTaskIdGenerator = (sr: BaseTaskMenuItem) => {
