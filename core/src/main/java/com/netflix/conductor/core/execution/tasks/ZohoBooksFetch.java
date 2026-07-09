@@ -48,11 +48,15 @@ public class ZohoBooksFetch extends WorkflowSystemTask {
 
     public static final String INPUT_CONNECTION_ID = "connectionId";
     public static final String INPUT_WORKFLOW_CONNECTION_ID = "zohoBooksConnectionId";
+    public static final String INPUT_TYPE = "type";
     public static final String INPUT_BILL_NUMBER = "billNumber";
     public static final String INPUT_BILL_NUMBERS = "billNumbers";
+    public static final String INPUT_BILL_IDS = "billIds";
     public static final String INPUT_INVOICE_NUMBER = "invoiceNumber";
     public static final String INPUT_INVOICE_NUMBERS = "invoiceNumbers";
+    public static final String INPUT_INVOICE_IDS = "invoiceIds";
     public static final String OUTPUT_CONNECTION_ID = "connectionId";
+    public static final String OUTPUT_TYPE = "type";
     public static final String OUTPUT_BILL_NUMBER = "billNumber";
     public static final String OUTPUT_BILL_ID = "billId";
     public static final String OUTPUT_BILL_NUMBERS = "billNumbers";
@@ -65,6 +69,7 @@ public class ZohoBooksFetch extends WorkflowSystemTask {
     public static final String OUTPUT_INVOICE_IDS = "invoiceIds";
     public static final String OUTPUT_INVOICE = "invoice";
     public static final String OUTPUT_INVOICES = "invoices";
+    public static final String OUTPUT_DOCUMENTS = "documents";
     public static final String OUTPUT_GRN_LIST = "grnList";
     public static final String OUTPUT_POD_LIST = "podList";
     public static final String OUTPUT_ERROR = "error";
@@ -89,6 +94,7 @@ public class ZohoBooksFetch extends WorkflowSystemTask {
             ZohoBooksFetchResponse response =
                     zohoBooksIntegrationService.fetchInvoiceDocuments(connection, request);
             task.addOutput(OUTPUT_CONNECTION_ID, response.getConnectionId());
+            task.addOutput(OUTPUT_TYPE, request.getType());
             task.addOutput(OUTPUT_BILL_NUMBER, response.getBillNumber());
             task.addOutput(OUTPUT_BILL_ID, response.getBillId());
             task.addOutput(OUTPUT_BILL_NUMBERS, response.getBillNumbers());
@@ -101,6 +107,7 @@ public class ZohoBooksFetch extends WorkflowSystemTask {
             task.addOutput(OUTPUT_INVOICE_IDS, response.getInvoiceIds());
             task.addOutput(OUTPUT_INVOICE, response.getInvoice());
             task.addOutput(OUTPUT_INVOICES, response.getInvoices());
+            task.addOutput(OUTPUT_DOCUMENTS, response.getDocuments());
             task.addOutput(OUTPUT_GRN_LIST, response.getGrnList());
             task.addOutput(OUTPUT_POD_LIST, response.getPodList());
             task.setStatus(TaskModel.Status.COMPLETED);
@@ -127,6 +134,7 @@ public class ZohoBooksFetch extends WorkflowSystemTask {
         }
         ZohoBooksFetchRequest request = new ZohoBooksFetchRequest();
         request.setConnectionId(connectionId);
+        request.setType(stringInput(input, INPUT_TYPE));
         request.setBillNumber(
                 firstNonBlank(
                         stringInput(input, INPUT_BILL_NUMBER),
@@ -136,8 +144,10 @@ public class ZohoBooksFetch extends WorkflowSystemTask {
                 billNumbers.isEmpty()
                         ? stringListInput(input.get(INPUT_INVOICE_NUMBERS))
                         : billNumbers);
+        request.setBillIds(stringListInput(input.get(INPUT_BILL_IDS)));
         request.setInvoiceNumber(stringInput(input, INPUT_INVOICE_NUMBER));
         request.setInvoiceNumbers(stringListInput(input.get(INPUT_INVOICE_NUMBERS)));
+        request.setInvoiceIds(stringListInput(input.get(INPUT_INVOICE_IDS)));
         return request;
     }
 

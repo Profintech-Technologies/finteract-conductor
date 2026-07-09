@@ -25,6 +25,7 @@ public class ZohoBooksFetchResponse {
     private List<String> invoiceIds = new ArrayList<>();
     private Map<String, Object> bill;
     private List<Map<String, Object>> bills = new ArrayList<>();
+    private List<Map<String, Object>> documents = new ArrayList<>();
     private List<Map<String, Object>> grnList = new ArrayList<>();
     private List<Map<String, Object>> podList = new ArrayList<>();
 
@@ -130,6 +131,14 @@ public class ZohoBooksFetchResponse {
 
     public void setInvoices(List<Map<String, Object>> invoices) {
         this.bills = invoices;
+    }
+
+    public List<Map<String, Object>> getDocuments() {
+        return documents;
+    }
+
+    public void setDocuments(List<Map<String, Object>> documents) {
+        this.documents = documents;
     }
 
     public List<Map<String, Object>> getGrnList() {

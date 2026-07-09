@@ -1610,6 +1610,132 @@ export const gDriveReadTaskSchema = {
   },
 };
 
+export const zohoBooksFetchTaskSchema = {
+  $id: "/properties/tasks/zohoBooksFetchTaskSchema",
+  type: "object",
+  description: "Zoho Books fetch task",
+  default: {
+    name: "zoho_books_fetch_ref",
+    taskReferenceName: "zoho_books_fetch_ref",
+    type: TaskType.ZOHO_BOOKS_FETCH,
+    inputParameters: {
+      connectionId: "${workflow.input.zohoBooksConnectionId}",
+      invoiceIds: [],
+      type: "bills",
+    },
+  },
+  required: ["name", "taskReferenceName", "type", "inputParameters"],
+  properties: {
+    name: { $ref: nameSchema.$id },
+    taskReferenceName: { $ref: taskReferenceName.$id },
+    type: { const: TaskType.ZOHO_BOOKS_FETCH },
+    inputParameters: {
+      type: "object",
+      properties: {
+        connectionId: {
+          type: "string",
+        },
+        invoiceIds: {
+          anyOf: [
+            {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+            {
+              type: "string",
+            },
+          ],
+        },
+        type: {
+          type: "string",
+          enum: ["bills", "invoices"],
+        },
+        billIds: {
+          anyOf: [
+            {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+            {
+              type: "string",
+            },
+          ],
+        },
+        billNumbers: {
+          anyOf: [
+            {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+            {
+              type: "string",
+            },
+          ],
+        },
+        invoiceNumbers: {
+          anyOf: [
+            {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+            {
+              type: "string",
+            },
+          ],
+        },
+        billNumber: {
+          type: "string",
+        },
+        invoiceNumber: {
+          type: "string",
+        },
+      },
+      required: ["connectionId", "invoiceIds", "type"],
+      additionalProperties: true,
+    },
+  },
+  additionalProperties: true,
+};
+
+export const grnPodReconcileTaskSchema = {
+  $id: "/properties/tasks/grnPodReconcileTaskSchema",
+  type: "object",
+  description: "GRN/POD reconciliation task",
+  default: {
+    name: "grn_pod_reconcile_ref",
+    taskReferenceName: "grn_pod_reconcile_ref",
+    type: TaskType.GRN_POD_RECONCILE,
+    inputParameters: {
+      grnList: "${workflow.input.grnList}",
+      podList: "${workflow.input.podList}",
+    },
+  },
+  required: ["name", "taskReferenceName", "type", "inputParameters"],
+  properties: {
+    name: { $ref: nameSchema.$id },
+    taskReferenceName: { $ref: taskReferenceName.$id },
+    type: { const: TaskType.GRN_POD_RECONCILE },
+    inputParameters: {
+      type: "object",
+      properties: {
+        grnList: {},
+        podList: {},
+      },
+      required: ["grnList", "podList"],
+      additionalProperties: true,
+    },
+  },
+  additionalProperties: true,
+};
+
 export const parseDocumentTaskSchema = {
   $id: "/properties/tasks/parseDocumentTaskSchema",
   type: "object",
@@ -1685,6 +1811,8 @@ export const tasksItemsSchema = {
       { $ref: listFilesTaskSchema.$id },
       { $ref: parseDocumentTaskSchema.$id },
       { $ref: gDriveReadTaskSchema.$id },
+      { $ref: zohoBooksFetchTaskSchema.$id },
+      { $ref: grnPodReconcileTaskSchema.$id },
     ],
   },
 };
@@ -1749,8 +1877,8 @@ export const schemasByType = {
   [TaskType.PARSE_DOCUMENT]: parseDocumentTaskSchema,
   [TaskType.GDRIVE_READ]: gDriveReadTaskSchema,
   [TaskType.GEMINI_LLM]: genericSchema,
-  [TaskType.ZOHO_BOOKS_FETCH]: genericSchema,
-  [TaskType.GRN_POD_RECONCILE]: genericSchema,
+  [TaskType.ZOHO_BOOKS_FETCH]: zohoBooksFetchTaskSchema,
+  [TaskType.GRN_POD_RECONCILE]: grnPodReconcileTaskSchema,
 };
 
 // Object.values(TaskType)
@@ -1905,6 +2033,8 @@ export const workflowDefinitionSchemaWithDeps = [
   listFilesTaskSchema,
   parseDocumentTaskSchema,
   gDriveReadTaskSchema,
+  zohoBooksFetchTaskSchema,
+  grnPodReconcileTaskSchema,
   // workflow must be at the end, because it wraps another schemas
   workflowSchema,
 ];

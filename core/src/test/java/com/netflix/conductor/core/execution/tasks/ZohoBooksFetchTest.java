@@ -45,6 +45,10 @@ public class ZohoBooksFetchTest {
                         Map.of("bill_id", "987654321", "bill_number", "INV-1002")));
         response.setGrnList(List.of(Map.of("document_name", "GRN-1001.pdf")));
         response.setPodList(List.of(Map.of("document_name", "POD-1001.pdf")));
+        response.setDocuments(
+                List.of(
+                        Map.of("document_name", "GRN-1001.pdf"),
+                        Map.of("document_name", "POD-1001.pdf")));
 
         RecordingZohoBooksIntegrationService service =
                 new RecordingZohoBooksIntegrationService(response);
@@ -56,6 +60,10 @@ public class ZohoBooksFetchTest {
                         Map.of(
                                 ZohoBooksFetch.INPUT_CONNECTION_ID,
                                 "zoho-prod",
+                                ZohoBooksFetch.INPUT_TYPE,
+                                "invoices",
+                                ZohoBooksFetch.INPUT_INVOICE_IDS,
+                                List.of("123456789", "987654321"),
                                 ZohoBooksFetch.INPUT_INVOICE_NUMBERS,
                                 List.of("INV-1001", "INV-1002")));
 
@@ -65,6 +73,8 @@ public class ZohoBooksFetchTest {
         assertTrue(progressed);
         assertEquals(TaskModel.Status.COMPLETED, task.getStatus());
         assertEquals("zoho-prod", service.lastConnection.getConnectionId());
+        assertEquals("invoices", service.lastRequest.getType());
+        assertEquals(List.of("123456789", "987654321"), service.lastRequest.getInvoiceIds());
         assertEquals(List.of("INV-1001", "INV-1002"), service.lastRequest.getInvoiceNumbers());
         assertEquals("zoho-prod", task.getOutputData().get(ZohoBooksFetch.OUTPUT_CONNECTION_ID));
         assertEquals(
@@ -78,6 +88,8 @@ public class ZohoBooksFetchTest {
                 response.getInvoices(), task.getOutputData().get(ZohoBooksFetch.OUTPUT_INVOICES));
         assertSame(response.getGrnList(), task.getOutputData().get(ZohoBooksFetch.OUTPUT_GRN_LIST));
         assertSame(response.getPodList(), task.getOutputData().get(ZohoBooksFetch.OUTPUT_POD_LIST));
+        assertSame(
+                response.getDocuments(), task.getOutputData().get(ZohoBooksFetch.OUTPUT_DOCUMENTS));
     }
 
     @Test

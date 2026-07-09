@@ -34,6 +34,7 @@ import {
   UnknownTaskForm,
   WaitTaskForm,
   YieldTaskForm,
+  ZohoBooksFetchTaskForm,
 } from "pages/definition/EditorPanel/TaskFormTab/forms";
 import TaskFormHeader from "pages/definition/EditorPanel/TaskFormTab/forms/TaskFormHeader/TaskFormHeader";
 import { FormMachineActionTypes } from "pages/definition/EditorPanel/TaskFormTab/state";
@@ -107,6 +108,8 @@ const getTaskForm = (type: string) => {
       return GeminiLlmTaskForm;
     case TaskType.GRN_POD_RECONCILE:
       return GrnPodReconcileTaskForm;
+    case TaskType.ZOHO_BOOKS_FETCH:
+      return ZohoBooksFetchTaskForm;
     case TaskType.INTEGRATION:
       return MCPTaskForm;
 

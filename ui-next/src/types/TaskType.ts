@@ -609,7 +609,10 @@ export interface ZohoBooksFetchTaskDef extends CommonTaskDef {
   type: TaskType.ZOHO_BOOKS_FETCH;
   inputParameters: {
     connectionId: string;
-    billNumbers: string | string[];
+    type: "bills" | "invoices";
+    invoiceIds: string | string[];
+    billIds?: string | string[];
+    billNumbers?: string | string[];
     billNumber?: string;
     invoiceNumbers?: string | string[];
     invoiceNumber?: string;

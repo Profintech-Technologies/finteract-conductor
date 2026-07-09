@@ -14,6 +14,7 @@ package org.conductoross.conductor.ai.tasks.worker;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
@@ -192,6 +193,52 @@ class GeminiWorkflowWorkersTest {
             assertEquals(1, responses.size());
             assertEquals("done", ((Map<?, ?>) responses.get(0)).get("result"));
             assertEquals(1, requestParts(server.takeRequest()).size());
+        } finally {
+            server.shutdown();
+        }
+    }
+
+    @Test
+    void runGeminiReadsZohoDocumentContentBase64() throws Exception {
+        MockWebServer server = startServer();
+        try {
+            server.enqueue(geminiResponse("{\"invoice_number\":\"HO-INV-000012\"}"));
+            GeminiWorkflowWorkers workers = newWorkers();
+
+            Map<String, Object> output =
+                    workers.runGemini(
+                            Map.of(
+                                    "apiKey",
+                                    "test-api-key",
+                                    "baseUrl",
+                                    baseUrl(server),
+                                    "model",
+                                    "gemini-2.5-flash",
+                                    "prompt",
+                                    "Extract every field from this document as JSON.",
+                                    "files",
+                                    List.of(
+                                            Map.of(
+                                                    "file_name",
+                                                    "BLR-INV-012584-POD.jpeg",
+                                                    "contentBase64",
+                                                    Base64.getEncoder()
+                                                            .encodeToString(
+                                                                    "zoho-document".getBytes()),
+                                                    "contentType",
+                                                    "image/jpeg")),
+                                    "jsonOutput",
+                                    true));
+
+            List<?> records = (List<?>) output.get("records");
+            assertEquals(1, records.size());
+            List<?> parts = requestParts(server.takeRequest());
+            assertEquals(2, parts.size());
+            Map<?, ?> inlineData = (Map<?, ?>) ((Map<?, ?>) parts.get(1)).get("inlineData");
+            assertEquals("image/jpeg", inlineData.get("mimeType"));
+            assertEquals(
+                    Base64.getEncoder().encodeToString("zoho-document".getBytes()),
+                    inlineData.get("data"));
         } finally {
             server.shutdown();
         }

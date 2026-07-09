@@ -18,10 +18,13 @@ import java.util.List;
 public class ZohoBooksFetchRequest {
 
     private String connectionId;
+    private String type;
     private String billNumber;
     private List<String> billNumbers = new ArrayList<>();
+    private List<String> billIds = new ArrayList<>();
     private String invoiceNumber;
     private List<String> invoiceNumbers = new ArrayList<>();
+    private List<String> invoiceIds = new ArrayList<>();
 
     public String getConnectionId() {
         return connectionId;
@@ -29,6 +32,14 @@ public class ZohoBooksFetchRequest {
 
     public void setConnectionId(String connectionId) {
         this.connectionId = connectionId;
+    }
+
+    public String getType() {
+        return type;
+    }
+
+    public void setType(String type) {
+        this.type = type;
     }
 
     public String getInvoiceNumber() {
@@ -61,5 +72,21 @@ public class ZohoBooksFetchRequest {
 
     public void setBillNumbers(List<String> billNumbers) {
         this.billNumbers = billNumbers;
+    }
+
+    public List<String> getBillIds() {
+        return billIds;
+    }
+
+    public void setBillIds(List<String> billIds) {
+        this.billIds = billIds;
+    }
+
+    public List<String> getInvoiceIds() {
+        return invoiceIds;
+    }
+
+    public void setInvoiceIds(List<String> invoiceIds) {
+        this.invoiceIds = invoiceIds;
     }
 }

@@ -787,7 +787,8 @@ export const generateZohoBooksFetchTask: GenerateTaskFn<
   type: TaskType.ZOHO_BOOKS_FETCH,
   inputParameters: {
     connectionId: "${workflow.input.zohoBooksConnectionId}",
-    billNumbers: "${workflow.input.billNumbers}",
+    invoiceIds: "${workflow.input.invoiceIds}",
+    type: "bills",
   },
   ...overrides,
 });

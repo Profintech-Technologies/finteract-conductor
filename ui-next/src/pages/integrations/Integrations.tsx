@@ -28,7 +28,12 @@ import { Helmet } from "react-helmet";
 import { useActionWithPath, useFetch } from "utils/query";
 import { getErrorMessage } from "utils/utils";
 
-type ProviderTab = "gdrive" | "gemini" | "zoho-books" | "reconciliation";
+type ProviderTab =
+  | "gdrive"
+  | "gemini"
+  | "zoho-books"
+  | "zoho-reconciliation"
+  | "reconciliation";
 type ConnectionTab = "create" | "manage";
 
 type GDriveFile = {
@@ -203,6 +208,95 @@ const buildZohoBooksFetchTask = () => ({
   inputParameters: {
     connectionId: workflowInput("zohoBooksConnectionId"),
     billNumbers: workflowInput("billNumbers"),
+    type: workflowInput("type"),
+  },
+});
+
+const buildGrnPodReconcileTask = ({
+  grnList = workflowInput("grnList"),
+  podList = workflowInput("podList"),
+}: {
+  grnList?: string;
+  podList?: string;
+} = {}) => ({
+  name: "grn_pod_reconcile",
+  taskReferenceName: "grn_pod_reconcile_ref",
+  type: "GRN_POD_RECONCILE",
+  inputParameters: {
+    grnList,
+    podList,
+  },
+});
+
+const buildZohoReconciliationWorkflow = () => ({
+  name: "zoho_reconciliation",
+  description:
+    "Fetch Zoho Books invoice attachments, classify GRN/POD documents with Gemini, OCR each document type, and reconcile the extracted records.",
+  version: 1,
+  schemaVersion: 2,
+  ownerEmail: "data_access@profintech.in",
+  inputParameters: [
+    "zohoBooksConnectionId",
+    "billNumbers",
+    "type",
+    "geminiConnectionId",
+  ],
+  tasks: [
+    buildZohoBooksFetchTask(),
+    buildGeminiTask({
+      connectionId: workflowInput("geminiConnectionId"),
+      promptname: "attachment_classify",
+      model: DEFAULT_GEMINI_MODEL,
+      files: "${zoho_books_fetch_ref.output.documents}",
+      taskReferenceName: "zoho_attachment_classify_ref",
+    }),
+    {
+      name: "extract_grn_pod",
+      taskReferenceName: "zoho_extract_grn_pod_ref",
+      type: "FORK_JOIN",
+      inputParameters: {},
+      forkTasks: [
+        [
+          buildGeminiTask({
+            connectionId: workflowInput("geminiConnectionId"),
+            promptname: "grn_extraction",
+            model: DEFAULT_GEMINI_MODEL,
+            files: "${zoho_attachment_classify_ref.output.grnDocuments}",
+            taskReferenceName: "zoho_grn_ocr_ref",
+          }),
+        ],
+        [
+          buildGeminiTask({
+            connectionId: workflowInput("geminiConnectionId"),
+            promptname: "pod_extraction",
+            model: DEFAULT_GEMINI_MODEL,
+            files: "${zoho_attachment_classify_ref.output.podDocuments}",
+            taskReferenceName: "zoho_pod_ocr_ref",
+          }),
+        ],
+      ],
+    },
+    {
+      name: "join_grn_pod_extractions",
+      taskReferenceName: "zoho_join_grn_pod_extractions_ref",
+      type: "JOIN",
+      inputParameters: {},
+      joinOn: ["zoho_grn_ocr_ref", "zoho_pod_ocr_ref"],
+    },
+    buildGrnPodReconcileTask({
+      grnList: "${zoho_grn_ocr_ref.output.records}",
+      podList: "${zoho_pod_ocr_ref.output.records}",
+    }),
+  ],
+  outputParameters: {
+    documents: "${zoho_books_fetch_ref.output.documents}",
+    classified: "${zoho_attachment_classify_ref.output}",
+    grn: "${zoho_grn_ocr_ref.output.records}",
+    pod: "${zoho_pod_ocr_ref.output.records}",
+    reconciliation: "${grn_pod_reconcile_ref.output}",
+    summary: "${grn_pod_reconcile_ref.output.summary}",
+    documentMatches: "${grn_pod_reconcile_ref.output.documentMatches}",
+    reconciliationRows: "${grn_pod_reconcile_ref.output.reconciliationRows}",
   },
 });
 
@@ -308,19 +402,11 @@ export default function Integrations() {
     }
 
     if (activeProvider === "reconciliation") {
-      return JSON.stringify(
-        {
-          name: "grn_pod_reconcile",
-          taskReferenceName: "grn_pod_reconcile_ref",
-          type: "GRN_POD_RECONCILE",
-          inputParameters: {
-            grnList: workflowInput("grnList"),
-            podList: workflowInput("podList"),
-          },
-        },
-        null,
-        2,
-      );
+      return JSON.stringify(buildGrnPodReconcileTask(), null, 2);
+    }
+
+    if (activeProvider === "zoho-reconciliation") {
+      return JSON.stringify(buildZohoReconciliationWorkflow(), null, 2);
     }
 
     if (activeProvider === "zoho-books") {
@@ -725,6 +811,10 @@ export default function Integrations() {
                   <Tab value="gdrive" label="GDrive" />
                   <Tab value="gemini" label="Gemini" />
                   <Tab value="zoho-books" label="Zoho Books" />
+                  <Tab
+                    value="zoho-reconciliation"
+                    label="Zoho Reconciliation"
+                  />
                   <Tab value="reconciliation" label="Reconciliation" />
                 </Tabs>
 
@@ -1043,9 +1133,7 @@ export default function Integrations() {
                                 alignItems="center"
                                 spacing={1}
                               >
-                                <Typography variant="h6">
-                                  Zoho Books
-                                </Typography>
+                                <Typography variant="h6">Zoho Books</Typography>
                                 <Chip label="ZOHO_BOOKS_FETCH" size="small" />
                               </Stack>
                               <TextField
@@ -1126,6 +1214,37 @@ export default function Integrations() {
                             />
                           )}
                         </Box>
+                      </Stack>
+                    )}
+
+                    {activeProvider === "zoho-reconciliation" && (
+                      <Stack spacing={3}>
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Typography variant="h6">
+                            Zoho Reconciliation
+                          </Typography>
+                          <Chip label="ZOHO_BOOKS_FETCH" size="small" />
+                          <Chip label="GRN_POD_RECONCILE" size="small" />
+                        </Stack>
+                        <Typography color="text.secondary">
+                          Fetch Zoho Books invoice attachments, classify them
+                          with Gemini, run GRN and POD OCR, then reconcile the
+                          extracted records.
+                        </Typography>
+                        <TextField
+                          label="Connection ID Input"
+                          value={workflowInput("zohoBooksConnectionId")}
+                          fullWidth
+                          size="small"
+                          disabled
+                        />
+                        <TextField
+                          label="Bill Numbers Input"
+                          value={workflowInput("billNumbers")}
+                          fullWidth
+                          size="small"
+                          disabled
+                        />
                       </Stack>
                     )}
 
@@ -1228,6 +1347,21 @@ export default function Integrations() {
                 </Paper>
               )}
 
+              {activeProvider === "zoho-reconciliation" && (
+                <Paper variant="outlined" sx={{ p: 3 }}>
+                  <Stack spacing={2}>
+                    <Typography variant="h6">Workflow Contract</Typography>
+                    <Typography color="text.secondary">
+                      Start this workflow with `zohoBooksConnectionId`,
+                      `geminiConnectionId`, `billNumbers`, and `type`. Zoho
+                      fetch emits `documents`, Gemini classifies and extracts
+                      GRN/POD records, and reconciliation consumes the OCR
+                      outputs.
+                    </Typography>
+                  </Stack>
+                </Paper>
+              )}
+
               {activeProvider === "zoho-books" && (
                 <Paper variant="outlined" sx={{ p: 3 }}>
                   <Stack spacing={2}>
@@ -1239,8 +1373,10 @@ export default function Integrations() {
                         />
                       )}
                     </Stack>
-                    {(zohoBooksInvoicesResult?.bills ?? zohoBooksInvoicesResult?.invoices)
-                      ?.length ? (
+                    {(
+                      zohoBooksInvoicesResult?.bills ??
+                      zohoBooksInvoicesResult?.invoices
+                    )?.length ? (
                       <TableContainer component={Box}>
                         <Table size="small">
                           <TableHead>
@@ -1258,37 +1394,35 @@ export default function Integrations() {
                             {(
                               zohoBooksInvoicesResult.bills ??
                               zohoBooksInvoicesResult.invoices
-                            ).map(
-                              (invoice, index) => (
-                                <TableRow
-                                  key={
-                                    invoice.bill_id ||
-                                    invoice.invoice_id ||
-                                    index.toString()
-                                  }
-                                >
-                                  <TableCell>
-                                    {invoice.bill_number ||
-                                      invoice.invoice_number ||
-                                      "-"}
-                                  </TableCell>
-                                  <TableCell>
-                                    {invoice.reference_number || "-"}
-                                  </TableCell>
-                                  <TableCell>
-                                    {invoice.vendor_name ||
-                                      invoice.customer_name ||
-                                      "-"}
-                                  </TableCell>
-                                  <TableCell>{invoice.status || "-"}</TableCell>
-                                  <TableCell>{invoice.date || "-"}</TableCell>
-                                  <TableCell>{invoice.total ?? "-"}</TableCell>
-                                  <TableCell>
-                                    {invoice.bill_id || invoice.invoice_id || "-"}
-                                  </TableCell>
-                                </TableRow>
-                              ),
-                            )}
+                            ).map((invoice, index) => (
+                              <TableRow
+                                key={
+                                  invoice.bill_id ||
+                                  invoice.invoice_id ||
+                                  index.toString()
+                                }
+                              >
+                                <TableCell>
+                                  {invoice.bill_number ||
+                                    invoice.invoice_number ||
+                                    "-"}
+                                </TableCell>
+                                <TableCell>
+                                  {invoice.reference_number || "-"}
+                                </TableCell>
+                                <TableCell>
+                                  {invoice.vendor_name ||
+                                    invoice.customer_name ||
+                                    "-"}
+                                </TableCell>
+                                <TableCell>{invoice.status || "-"}</TableCell>
+                                <TableCell>{invoice.date || "-"}</TableCell>
+                                <TableCell>{invoice.total ?? "-"}</TableCell>
+                                <TableCell>
+                                  {invoice.bill_id || invoice.invoice_id || "-"}
+                                </TableCell>
+                              </TableRow>
+                            ))}
                           </TableBody>
                         </Table>
                       </TableContainer>

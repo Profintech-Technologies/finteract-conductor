@@ -17,6 +17,7 @@ import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -110,11 +111,24 @@ class ZohoBooksIntegrationServiceTest {
         server.createContext(
                 "/books/v3/bills",
                 exchange -> {
+                    if (exchange.getRequestURI()
+                            .getPath()
+                            .endsWith("/bill-one/documents/grn-doc")) {
+                        respondBytes(exchange, "grn-content");
+                        return;
+                    }
+                    if (exchange.getRequestURI()
+                            .getPath()
+                            .endsWith("/bill-one/documents/pod-doc")) {
+                        respondBytes(exchange, "pod-content");
+                        return;
+                    }
                     if (exchange.getRequestURI().getPath().endsWith("/bill-one")) {
                         respond(
                                 exchange,
                                 "{\"bill\":{\"bill_id\":\"bill-one\",\"bill_number\":\"BILL-001\","
-                                        + "\"documents\":[{\"file_name\":\"GRN-001.pdf\"},{\"file_name\":\"POD-001.pdf\"}]}}");
+                                        + "\"documents\":[{\"document_id\":\"grn-doc\",\"file_name\":\"GRN-001.pdf\"},"
+                                        + "{\"document_id\":\"pod-doc\",\"file_name\":\"POD-001.pdf\"}]}}");
                         return;
                     }
                     listRequests.incrementAndGet();
@@ -146,9 +160,121 @@ class ZohoBooksIntegrationServiceTest {
             assertEquals("BILL-001", response.getBillNumber());
             assertEquals("BILL-001", response.getBill().get("bill_number"));
             assertEquals("bill-one", response.getBills().get(0).get("bill_id"));
+            assertEquals(2, response.getDocuments().size());
+            assertEquals("GRN-001.pdf", response.getDocuments().get(0).get("file_name"));
+            assertEquals("POD-001.pdf", response.getDocuments().get(1).get("file_name"));
+            assertEquals("bill-one", response.getDocuments().get(0).get("billId"));
+            assertEquals("BILL-001", response.getDocuments().get(0).get("billNumber"));
+            assertEquals("grn-doc", response.getDocuments().get(0).get("document_id"));
+            assertEquals(
+                    Base64.getEncoder()
+                            .encodeToString("grn-content".getBytes(StandardCharsets.UTF_8)),
+                    response.getDocuments().get(0).get("contentBase64"));
+            assertEquals("text/plain", response.getDocuments().get(0).get("contentType"));
+            assertEquals(11, response.getDocuments().get(0).get("contentSize"));
+            assertEquals(true, response.getDocuments().get(0).get("contentFetched"));
             assertEquals(1, response.getGrnList().size());
             assertEquals(1, response.getPodList().size());
             assertEquals("bill-one", response.getGrnList().get(0).get("billId"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void fetchInvoiceDocumentsGetsInvoicesByInvoiceIdsWhenTypeIsInvoices() throws Exception {
+        AtomicInteger tokenRequests = new AtomicInteger();
+        AtomicInteger invoiceRequests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/oauth/v2/token", exchange -> handleToken(exchange, tokenRequests));
+        server.createContext(
+                "/books/v3/invoices/invoice-one",
+                exchange -> {
+                    if (exchange.getRequestURI().getPath().endsWith("/documents/grn-doc")) {
+                        respondBytes(exchange, "invoice-grn-content");
+                        return;
+                    }
+                    invoiceRequests.incrementAndGet();
+                    respond(
+                            exchange,
+                            "{\"invoice\":{\"invoice_id\":\"invoice-one\","
+                                    + "\"invoice_number\":\"INV-001\","
+                                    + "\"documents\":[{\"document_id\":\"grn-doc\",\"file_name\":\"GRN-001.pdf\"}]}}");
+                });
+        server.start();
+
+        try {
+            String baseUrl = "http://localhost:" + server.getAddress().getPort();
+            ZohoBooksIntegrationService service =
+                    service(baseUrl, baseUrl + "/books/v3", "global-id", "global-secret");
+            ZohoBooksFetchRequest request = new ZohoBooksFetchRequest();
+            request.setType("invoices");
+            request.setInvoiceIds(List.of("invoice-one"));
+
+            ZohoBooksFetchResponse response =
+                    service.fetchInvoiceDocuments(
+                            new ZohoBooksConnection("one", null, null, "organization-one"),
+                            request);
+
+            assertEquals(1, tokenRequests.get());
+            assertEquals(1, invoiceRequests.get());
+            assertEquals("invoice-one", response.getInvoiceId());
+            assertEquals("INV-001", response.getInvoiceNumber());
+            assertEquals("invoice-one", response.getInvoices().get(0).get("invoice_id"));
+            assertEquals(1, response.getDocuments().size());
+            assertEquals(
+                    "invoice-grn-content".length(),
+                    response.getDocuments().get(0).get("contentSize"));
+            assertEquals(1, response.getGrnList().size());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void fetchInvoiceDocumentsAllowsBillNumbersAliasWhenTypeIsInvoices() throws Exception {
+        AtomicInteger tokenRequests = new AtomicInteger();
+        AtomicInteger listRequests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/oauth/v2/token", exchange -> handleToken(exchange, tokenRequests));
+        server.createContext(
+                "/books/v3/invoices",
+                exchange -> {
+                    if (exchange.getRequestURI().getPath().endsWith("/invoice-one")) {
+                        respond(
+                                exchange,
+                                "{\"invoice\":{\"invoice_id\":\"invoice-one\","
+                                        + "\"invoice_number\":\"HO-INV-000012\"}}");
+                        return;
+                    }
+                    listRequests.incrementAndGet();
+                    String query = exchange.getRequestURI().getRawQuery();
+                    assertTrue(query.contains("invoice_number=HO-INV-000012"));
+                    respond(
+                            exchange,
+                            "{\"invoices\":[{\"invoice_id\":\"invoice-one\","
+                                    + "\"invoice_number\":\"HO-INV-000012\"}],"
+                                    + "\"page_context\":{\"has_more_page\":false}}");
+                });
+        server.start();
+
+        try {
+            String baseUrl = "http://localhost:" + server.getAddress().getPort();
+            ZohoBooksIntegrationService service =
+                    service(baseUrl, baseUrl + "/books/v3", "global-id", "global-secret");
+            ZohoBooksFetchRequest request = new ZohoBooksFetchRequest();
+            request.setType("invoices");
+            request.setBillNumbers(List.of("HO-INV-000012"));
+
+            ZohoBooksFetchResponse response =
+                    service.fetchInvoiceDocuments(
+                            new ZohoBooksConnection("one", null, null, "organization-one"),
+                            request);
+
+            assertEquals(1, tokenRequests.get());
+            assertEquals(1, listRequests.get());
+            assertEquals("invoice-one", response.getInvoiceId());
+            assertEquals("HO-INV-000012", response.getInvoiceNumber());
         } finally {
             server.stop(0);
         }
@@ -200,6 +326,14 @@ class ZohoBooksIntegrationServiceTest {
     private void respond(HttpExchange exchange, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
+    }
+
+    private void respondBytes(HttpExchange exchange, String body) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "text/plain");
         exchange.sendResponseHeaders(200, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();

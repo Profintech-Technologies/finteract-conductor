@@ -227,6 +227,7 @@ function zohoBooksTaskSnippet() {
       inputParameters: {
         connectionId: workflowInput("zohoBooksConnectionId"),
         billNumbers: workflowInput("billNumbers"),
+        type: workflowInput("type"),
       },
     },
     null,

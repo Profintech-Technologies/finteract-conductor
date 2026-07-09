@@ -24,6 +24,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -48,7 +49,7 @@ public class ZohoBooksIntegrationService {
     private static final String DEFAULT_REGION = "in";
     private static final String DEFAULT_ACCOUNTS_URL = accountsUrlForRegion(DEFAULT_REGION);
     private static final String DEFAULT_API_URL = booksApiUrlForRegion(DEFAULT_REGION);
-    private static final String DEFAULT_SCOPE = "ZohoBooks.bills.READ";
+    private static final String DEFAULT_SCOPE = "ZohoBooks.bills.READ,ZohoBooks.invoices.READ";
     private static final String DEFAULT_BILL_STATUSES = "all";
     private static final int PAGE_SIZE = 200;
     private static final int DEFAULT_TOKEN_EXPIRY_SECONDS = 3600;
@@ -124,40 +125,92 @@ public class ZohoBooksIntegrationService {
         if (connection == null) {
             throw new ZohoBooksIntegrationException("Zoho Books connection is required");
         }
-        List<String> invoiceNumbers = billNumbers(request);
+        ZohoBooksDocumentType documentType = documentType(request);
+        List<String> documentIds = documentIds(request, documentType);
+        List<String> documentNumbers =
+                documentNumbers(request, documentType, documentIds.isEmpty());
         String accessToken = accessToken(connection);
         ZohoBooksFetchResponse response = new ZohoBooksFetchResponse();
         response.setConnectionId(connection.getConnectionId());
-        response.setBillNumbers(invoiceNumbers);
-        List<String> invoiceIds = new ArrayList<>();
-        List<Map<String, Object>> bills = new ArrayList<>();
+        response.setBillNumbers(documentNumbers);
+        List<String> resolvedDocumentIds = new ArrayList<>();
+        List<Map<String, Object>> documents = new ArrayList<>();
+        List<Map<String, Object>> attachmentDocuments = new ArrayList<>();
         List<Map<String, Object>> grnList = new ArrayList<>();
         List<Map<String, Object>> podList = new ArrayList<>();
 
-        for (String invoiceNumber : invoiceNumbers) {
-            Map<String, Object> billSummary =
-                    findBillByNumber(connection, accessToken, invoiceNumber);
-            String billId = stringValue(billSummary.get("bill_id"));
-            if (isBlank(billId)) {
-                throw new ZohoBooksIntegrationException(
-                        "Zoho Books bill " + invoiceNumber + " did not include bill_id");
-            }
-
-            Map<String, Object> bill = getBill(connection, accessToken, billId);
-            invoiceIds.add(billId);
-            bills.add(bill);
-            grnList.addAll(classifiedRecords(bill, true, invoiceNumber, billId));
-            podList.addAll(classifiedRecords(bill, false, invoiceNumber, billId));
+        for (String documentId : documentIds) {
+            Map<String, Object> document =
+                    getDocument(connection, accessToken, documentType, documentId);
+            String documentNumber = documentNumber(document, documentType);
+            String normalizedDocumentId = documentId(document, documentType);
+            resolvedDocumentIds.add(
+                    isBlank(normalizedDocumentId) ? documentId : normalizedDocumentId);
+            documents.add(document);
+            attachmentDocuments.addAll(
+                    documentRecords(
+                            connection,
+                            accessToken,
+                            document,
+                            documentType,
+                            documentNumber,
+                            resolvedDocumentIds.get(resolvedDocumentIds.size() - 1)));
+            grnList.addAll(
+                    classifiedRecords(
+                            document,
+                            true,
+                            documentNumber,
+                            resolvedDocumentIds.get(resolvedDocumentIds.size() - 1)));
+            podList.addAll(
+                    classifiedRecords(
+                            document,
+                            false,
+                            documentNumber,
+                            resolvedDocumentIds.get(resolvedDocumentIds.size() - 1)));
         }
 
-        response.setBillIds(invoiceIds);
-        response.setBills(bills);
+        for (String documentNumber : documentNumbers) {
+            Map<String, Object> summary =
+                    findDocumentByNumber(connection, accessToken, documentType, documentNumber);
+            String documentId = documentId(summary, documentType);
+            if (isBlank(documentId)) {
+                throw new ZohoBooksIntegrationException(
+                        "Zoho Books "
+                                + documentType.singularName()
+                                + " "
+                                + documentNumber
+                                + " did not include "
+                                + documentType.idField());
+            }
+
+            Map<String, Object> document =
+                    getDocument(connection, accessToken, documentType, documentId);
+            resolvedDocumentIds.add(documentId);
+            documents.add(document);
+            attachmentDocuments.addAll(
+                    documentRecords(
+                            connection,
+                            accessToken,
+                            document,
+                            documentType,
+                            documentNumber,
+                            documentId));
+            grnList.addAll(classifiedRecords(document, true, documentNumber, documentId));
+            podList.addAll(classifiedRecords(document, false, documentNumber, documentId));
+        }
+
+        response.setBillIds(resolvedDocumentIds);
+        response.setBills(documents);
+        response.setDocuments(attachmentDocuments);
         response.setGrnList(grnList);
         response.setPodList(podList);
-        if (invoiceNumbers.size() == 1) {
-            response.setBillNumber(invoiceNumbers.get(0));
-            response.setBillId(invoiceIds.get(0));
-            response.setBill(bills.get(0));
+        if (documents.size() == 1) {
+            response.setBillNumber(
+                    documentNumbers.isEmpty()
+                            ? documentNumber(documents.get(0), documentType)
+                            : documentNumbers.get(0));
+            response.setBillId(resolvedDocumentIds.get(0));
+            response.setBill(documents.get(0));
         }
         return response;
     }
@@ -187,7 +240,9 @@ public class ZohoBooksIntegrationService {
             if (isBlank(invoiceId)) {
                 hydratedInvoices.add(invoice);
             } else {
-                hydratedInvoices.add(getBill(connection, accessToken, invoiceId));
+                hydratedInvoices.add(
+                        getDocument(
+                                connection, accessToken, ZohoBooksDocumentType.BILLS, invoiceId));
             }
         }
 
@@ -197,9 +252,10 @@ public class ZohoBooksIntegrationService {
         return response;
     }
 
-    private List<String> billNumbers(ZohoBooksFetchRequest request) {
+    private List<String> documentNumbers(
+            ZohoBooksFetchRequest request, ZohoBooksDocumentType documentType, boolean required) {
         if (request == null) {
-            throw new ZohoBooksIntegrationException("billNumbers is required");
+            throw new ZohoBooksIntegrationException("Request body is required");
         }
         List<String> invoiceNumbers = new ArrayList<>();
         if (request.getBillNumbers() != null) {
@@ -222,10 +278,42 @@ public class ZohoBooksIntegrationService {
         if (invoiceNumbers.isEmpty() && !isBlank(request.getInvoiceNumber())) {
             invoiceNumbers.add(request.getInvoiceNumber().trim());
         }
-        if (invoiceNumbers.isEmpty()) {
-            throw new ZohoBooksIntegrationException("billNumbers is required");
+        if (required && invoiceNumbers.isEmpty()) {
+            throw new ZohoBooksIntegrationException("invoiceIds or invoiceNumbers is required");
         }
         return invoiceNumbers;
+    }
+
+    private List<String> documentIds(
+            ZohoBooksFetchRequest request, ZohoBooksDocumentType documentType) {
+        if (request == null) {
+            throw new ZohoBooksIntegrationException("Request body is required");
+        }
+        List<String> documentIds = new ArrayList<>();
+        if (request.getInvoiceIds() != null) {
+            request.getInvoiceIds().stream()
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(value -> !isBlank(value))
+                    .forEach(documentIds::add);
+        }
+        if (documentIds.isEmpty()
+                && documentType == ZohoBooksDocumentType.BILLS
+                && request.getBillIds() != null) {
+            request.getBillIds().stream()
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(value -> !isBlank(value))
+                    .forEach(documentIds::add);
+        }
+        return documentIds;
+    }
+
+    private ZohoBooksDocumentType documentType(ZohoBooksFetchRequest request) {
+        if (request == null || isBlank(request.getType())) {
+            return ZohoBooksDocumentType.BILLS;
+        }
+        return ZohoBooksDocumentType.from(request.getType());
     }
 
     private String accessToken(ZohoBooksConnection connection) {
@@ -281,28 +369,39 @@ public class ZohoBooksIntegrationService {
         return sha256(client.clientId() + ":" + connection.getOrganizationId() + ":" + scope);
     }
 
-    private Map<String, Object> findBillByNumber(
-            ZohoBooksConnection connection, String accessToken, String invoiceNumber) {
+    private Map<String, Object> findDocumentByNumber(
+            ZohoBooksConnection connection,
+            String accessToken,
+            ZohoBooksDocumentType documentType,
+            String invoiceNumber) {
         for (String status : invoiceStatuses) {
-            for (SearchFilter searchFilter : searchFilters(invoiceNumber)) {
+            for (SearchFilter searchFilter : searchFilters(invoiceNumber, documentType)) {
                 Map<String, Object> invoice =
-                        findBillByNumber(
-                                connection, accessToken, invoiceNumber, status, searchFilter);
+                        findDocumentByNumber(
+                                connection,
+                                accessToken,
+                                documentType,
+                                invoiceNumber,
+                                status,
+                                searchFilter);
                 if (!invoice.isEmpty()) {
                     return invoice;
                 }
             }
         }
         throw new ZohoBooksIntegrationException(
-                "No Zoho Books bill found for billNumber "
+                "No Zoho Books "
+                        + documentType.singularName()
+                        + " found for invoiceNumber "
                         + invoiceNumber
                         + " in statuses "
                         + invoiceStatuses);
     }
 
-    private Map<String, Object> findBillByNumber(
+    private Map<String, Object> findDocumentByNumber(
             ZohoBooksConnection connection,
             String accessToken,
+            ZohoBooksDocumentType documentType,
             String invoiceNumber,
             String status,
             SearchFilter searchFilter) {
@@ -312,11 +411,11 @@ public class ZohoBooksIntegrationService {
                     sendAuthenticatedJson(
                             connection,
                             accessToken,
-                            invoiceListUri(connection, searchFilter, status, page),
-                            "Unable to list Zoho Books bills");
-            List<Map<String, Object>> invoices = objectList(response.get("bills"));
+                            listUri(connection, documentType, searchFilter, status, page),
+                            "Unable to list Zoho Books " + documentType.path());
+            List<Map<String, Object>> invoices = objectList(response.get(documentType.path()));
             for (Map<String, Object> invoice : invoices) {
-                if (matchesInvoiceNumber(invoice, invoiceNumber)) {
+                if (matchesInvoiceNumber(invoice, invoiceNumber, documentType)) {
                     return invoice;
                 }
             }
@@ -327,17 +426,16 @@ public class ZohoBooksIntegrationService {
         }
     }
 
-    private URI invoiceListUri(
-            ZohoBooksConnection connection, SearchFilter searchFilter, String status, int page) {
-        return billsUri(connection, status, page, searchFilter);
-    }
-
     private URI billsUri(ZohoBooksConnection connection, String status, int page) {
-        return billsUri(connection, status, page, null);
+        return listUri(connection, ZohoBooksDocumentType.BILLS, null, status, page);
     }
 
-    private URI billsUri(
-            ZohoBooksConnection connection, String status, int page, SearchFilter searchFilter) {
+    private URI listUri(
+            ZohoBooksConnection connection,
+            ZohoBooksDocumentType documentType,
+            SearchFilter searchFilter,
+            String status,
+            int page) {
         String statusParameter =
                 isAllStatus(status)
                         ? "&filter_by=" + encode("Status.All")
@@ -349,7 +447,9 @@ public class ZohoBooksIntegrationService {
         URI uri =
                 URI.create(
                         apiUrl
-                                + "/bills?organization_id="
+                                + "/"
+                                + documentType.path()
+                                + "?organization_id="
                                 + encode(connection.getOrganizationId())
                                 + statusParameter
                                 + "&per_page="
@@ -396,43 +496,129 @@ public class ZohoBooksIntegrationService {
         return "all".equalsIgnoreCase(status);
     }
 
-    private List<SearchFilter> searchFilters(String invoiceNumber) {
+    private List<SearchFilter> searchFilters(
+            String invoiceNumber, ZohoBooksDocumentType documentType) {
         return List.of(
-                new SearchFilter("bill_number", invoiceNumber),
-                new SearchFilter("bill_number_contains", invoiceNumber),
+                new SearchFilter(documentType.numberField(), invoiceNumber),
+                new SearchFilter(documentType.numberField() + "_contains", invoiceNumber),
                 new SearchFilter("reference_number", invoiceNumber),
                 new SearchFilter("reference_number_contains", invoiceNumber),
                 new SearchFilter("search_text", invoiceNumber));
     }
 
-    private boolean matchesInvoiceNumber(Map<String, Object> invoice, String invoiceNumber) {
-        return equalsField(invoice, "bill_number", invoiceNumber)
+    private boolean matchesInvoiceNumber(
+            Map<String, Object> invoice, String invoiceNumber, ZohoBooksDocumentType documentType) {
+        return equalsField(invoice, documentType.numberField(), invoiceNumber)
                 || equalsField(invoice, "reference_number", invoiceNumber)
-                || equalsField(invoice, "bill_id", invoiceNumber);
+                || equalsField(invoice, documentType.idField(), invoiceNumber);
     }
 
     private boolean equalsField(Map<String, Object> invoice, String field, String expected) {
         return expected.equalsIgnoreCase(Objects.toString(invoice.get(field), "").trim());
     }
 
-    private Map<String, Object> getBill(
-            ZohoBooksConnection connection, String accessToken, String invoiceId) {
+    private Map<String, Object> getDocument(
+            ZohoBooksConnection connection,
+            String accessToken,
+            ZohoBooksDocumentType documentType,
+            String invoiceId) {
         URI uri =
                 URI.create(
                         apiUrl
-                                + "/bills/"
+                                + "/"
+                                + documentType.path()
+                                + "/"
                                 + encode(invoiceId)
                                 + "?organization_id="
                                 + encode(connection.getOrganizationId()));
         Map<String, Object> response =
                 sendAuthenticatedJson(
-                        connection, accessToken, uri, "Unable to get Zoho Books bill");
-        Map<String, Object> invoice = objectMap(response.get("bill"));
+                        connection,
+                        accessToken,
+                        uri,
+                        "Unable to get Zoho Books " + documentType.singularName());
+        Map<String, Object> invoice = objectMap(response.get(documentType.singularName()));
         if (invoice.isEmpty()) {
             throw new ZohoBooksIntegrationException(
-                    "Zoho Books bill response did not include bill");
+                    "Zoho Books "
+                            + documentType.singularName()
+                            + " response did not include "
+                            + documentType.singularName());
         }
         return invoice;
+    }
+
+    private String documentId(Map<String, Object> document, ZohoBooksDocumentType documentType) {
+        return stringValue(document.get(documentType.idField()));
+    }
+
+    private String documentNumber(
+            Map<String, Object> document, ZohoBooksDocumentType documentType) {
+        return stringValue(document.get(documentType.numberField()));
+    }
+
+    private DownloadedAttachment downloadAttachment(
+            ZohoBooksConnection connection,
+            String accessToken,
+            ZohoBooksDocumentType documentType,
+            String invoiceId,
+            String attachmentDocumentId) {
+        List<URI> candidates =
+                List.of(
+                        attachmentDocumentUri(
+                                connection, documentType, invoiceId, attachmentDocumentId),
+                        attachmentUri(connection, documentType, invoiceId, attachmentDocumentId),
+                        attachmentUri(connection, documentType, invoiceId, null));
+        ZohoBooksIntegrationException lastException = null;
+        for (URI candidate : candidates) {
+            try {
+                return sendAuthenticatedBytes(
+                        connection,
+                        accessToken,
+                        candidate,
+                        "Unable to download Zoho Books attachment");
+            } catch (ZohoBooksIntegrationException e) {
+                lastException = e;
+            }
+        }
+        throw lastException == null
+                ? new ZohoBooksIntegrationException("Unable to download Zoho Books attachment")
+                : lastException;
+    }
+
+    private URI attachmentDocumentUri(
+            ZohoBooksConnection connection,
+            ZohoBooksDocumentType documentType,
+            String invoiceId,
+            String attachmentDocumentId) {
+        return URI.create(
+                apiUrl
+                        + "/"
+                        + documentType.path()
+                        + "/"
+                        + encode(invoiceId)
+                        + "/documents/"
+                        + encode(attachmentDocumentId)
+                        + "?organization_id="
+                        + encode(connection.getOrganizationId()));
+    }
+
+    private URI attachmentUri(
+            ZohoBooksConnection connection,
+            ZohoBooksDocumentType documentType,
+            String invoiceId,
+            String attachmentDocumentId) {
+        String documentParameter =
+                isBlank(attachmentDocumentId) ? "" : "&document_id=" + encode(attachmentDocumentId);
+        return URI.create(
+                apiUrl
+                        + "/"
+                        + documentType.path()
+                        + "/"
+                        + encode(invoiceId)
+                        + "/attachment?organization_id="
+                        + encode(connection.getOrganizationId())
+                        + documentParameter);
     }
 
     private HttpRequest get(URI uri, String accessToken) {
@@ -462,6 +648,25 @@ public class ZohoBooksIntegrationService {
         return readJson(response, failureMessage);
     }
 
+    private DownloadedAttachment sendAuthenticatedBytes(
+            ZohoBooksConnection connection,
+            String accessTokenHint,
+            URI uri,
+            String failureMessage) {
+        String currentAccessToken =
+                isBlank(accessTokenHint) ? accessToken(connection) : accessTokenHint;
+        CachedToken cachedToken = TOKEN_CACHE.get(tokenCacheKey(connection));
+        if (cachedToken != null && cachedToken.isUsable()) {
+            currentAccessToken = cachedToken.accessToken;
+        }
+        HttpResponse<byte[]> response = sendBytes(get(uri, currentAccessToken), failureMessage);
+        if (response.statusCode() == 401) {
+            currentAccessToken = refreshAccessToken(connection);
+            response = sendBytes(get(uri, currentAccessToken), failureMessage);
+        }
+        return readBytes(response, failureMessage);
+    }
+
     private Map<String, Object> sendJson(HttpRequest request, String failureMessage) {
         return readJson(send(request, failureMessage), failureMessage);
     }
@@ -469,6 +674,17 @@ public class ZohoBooksIntegrationService {
     private HttpResponse<String> send(HttpRequest request, String failureMessage) {
         try {
             return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (IOException e) {
+            throw new ZohoBooksIntegrationException(failureMessage, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ZohoBooksIntegrationException(failureMessage + " was interrupted", e);
+        }
+    }
+
+    private HttpResponse<byte[]> sendBytes(HttpRequest request, String failureMessage) {
+        try {
+            return httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
         } catch (IOException e) {
             throw new ZohoBooksIntegrationException(failureMessage, e);
         } catch (InterruptedException e) {
@@ -487,6 +703,16 @@ public class ZohoBooksIntegrationService {
         } catch (IOException e) {
             throw new ZohoBooksIntegrationException(failureMessage, e);
         }
+    }
+
+    private DownloadedAttachment readBytes(HttpResponse<byte[]> response, String failureMessage) {
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new ZohoBooksIntegrationException(
+                    failureMessage + " with HTTP " + response.statusCode());
+        }
+        String contentType =
+                response.headers().firstValue("content-type").orElse("application/octet-stream");
+        return new DownloadedAttachment(response.body(), contentType);
     }
 
     private String refreshAccessToken(ZohoBooksConnection connection) {
@@ -509,6 +735,49 @@ public class ZohoBooksIntegrationService {
         return records;
     }
 
+    private List<Map<String, Object>> documentRecords(
+            ZohoBooksConnection connection,
+            String accessToken,
+            Map<String, Object> invoice,
+            ZohoBooksDocumentType documentType,
+            String invoiceNumber,
+            String invoiceId) {
+        List<Map<String, Object>> records = new ArrayList<>();
+        collectDocumentRecords(invoice, records);
+        records.replaceAll(
+                record ->
+                        attachmentContentRecord(
+                                connection,
+                                accessToken,
+                                documentType,
+                                invoiceScopedRecord(record, invoiceNumber, invoiceId),
+                                invoiceId));
+        return records;
+    }
+
+    private Map<String, Object> attachmentContentRecord(
+            ZohoBooksConnection connection,
+            String accessToken,
+            ZohoBooksDocumentType documentType,
+            Map<String, Object> record,
+            String invoiceId) {
+        String attachmentDocumentId = stringValue(record.get("document_id"));
+        if (isBlank(attachmentDocumentId) || isBlank(invoiceId)) {
+            return record;
+        }
+
+        DownloadedAttachment downloadedAttachment =
+                downloadAttachment(
+                        connection, accessToken, documentType, invoiceId, attachmentDocumentId);
+        Map<String, Object> contentRecord = new LinkedHashMap<>(record);
+        contentRecord.put(
+                "contentBase64", Base64.getEncoder().encodeToString(downloadedAttachment.body()));
+        contentRecord.put("contentSize", downloadedAttachment.body().length);
+        contentRecord.put("contentType", downloadedAttachment.contentType());
+        contentRecord.put("contentFetched", true);
+        return contentRecord;
+    }
+
     private Map<String, Object> invoiceScopedRecord(
             Map<String, Object> record, String invoiceNumber, String invoiceId) {
         Map<String, Object> scopedRecord = new LinkedHashMap<>(record);
@@ -519,12 +788,25 @@ public class ZohoBooksIntegrationService {
         return scopedRecord;
     }
 
+    private void collectDocumentRecords(Object value, List<Map<String, Object>> records) {
+        if (value instanceof Map<?, ?>) {
+            Map<String, Object> record = normalizeMap((Map<?, ?>) value);
+            if (isDocumentEvidenceRecord(record)) {
+                records.add(record);
+            }
+            record.values().forEach(child -> collectDocumentRecords(child, records));
+        } else if (value instanceof List<?>) {
+            ((List<?>) value).forEach(child -> collectDocumentRecords(child, records));
+        }
+    }
+
     private void collectClassifiedRecords(
             Object value, boolean grnRecords, List<Map<String, Object>> records) {
         if (value instanceof Map<?, ?>) {
             Map<String, Object> record = normalizeMap((Map<?, ?>) value);
             String searchable = searchableText(record);
-            if (grnRecords ? isGrn(searchable) : isPod(searchable)) {
+            if (isDocumentEvidenceRecord(record)
+                    && (grnRecords ? isGrn(searchable) : isPod(searchable))) {
                 records.add(record);
             }
             record.values().forEach(child -> collectClassifiedRecords(child, grnRecords, records));
@@ -532,6 +814,14 @@ public class ZohoBooksIntegrationService {
             ((List<?>) value)
                     .forEach(child -> collectClassifiedRecords(child, grnRecords, records));
         }
+    }
+
+    private boolean isDocumentEvidenceRecord(Map<String, Object> record) {
+        return record.containsKey("file_name")
+                || record.containsKey("document_id")
+                || record.containsKey("attachment_order")
+                || record.containsKey("file_type")
+                || record.containsKey("uploaded_on");
     }
 
     private boolean isGrn(String value) {
@@ -753,5 +1043,52 @@ public class ZohoBooksIntegrationService {
 
     private record SearchFilter(String name, String value) {}
 
+    private record DownloadedAttachment(byte[] body, String contentType) {}
+
     private record OAuthClient(String clientId, String clientSecret) {}
+
+    private enum ZohoBooksDocumentType {
+        BILLS("bills", "bill", "bill_id", "bill_number"),
+        INVOICES("invoices", "invoice", "invoice_id", "invoice_number");
+
+        private final String path;
+        private final String singularName;
+        private final String idField;
+        private final String numberField;
+
+        ZohoBooksDocumentType(
+                String path, String singularName, String idField, String numberField) {
+            this.path = path;
+            this.singularName = singularName;
+            this.idField = idField;
+            this.numberField = numberField;
+        }
+
+        private String path() {
+            return path;
+        }
+
+        private String singularName() {
+            return singularName;
+        }
+
+        private String idField() {
+            return idField;
+        }
+
+        private String numberField() {
+            return numberField;
+        }
+
+        private static ZohoBooksDocumentType from(String value) {
+            String normalized = value.trim().toLowerCase();
+            return switch (normalized) {
+                case "bills", "bill" -> BILLS;
+                case "invoices", "invoice" -> INVOICES;
+                default ->
+                        throw new ZohoBooksIntegrationException(
+                                "Zoho Books type must be bills or invoices");
+            };
+        }
+    }
 }
