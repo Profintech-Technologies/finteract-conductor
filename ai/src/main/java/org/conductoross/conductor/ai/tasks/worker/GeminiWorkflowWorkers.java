@@ -330,7 +330,11 @@ public class GeminiWorkflowWorkers implements AnnotatedSystemTaskWorker {
     private GeminiDocumentBytes documentBytes(
             Map<String, Object> input, Map<String, Object> document) {
         String localPath = stringValue(document.get("localPath"));
-        String mimeType = firstNonBlank(stringValue(document.get("mimeType")), "application/pdf");
+        String mimeType =
+                firstNonBlank(
+                        stringValue(document.get("mimeType")),
+                        stringValue(document.get("contentType")),
+                        "application/pdf");
         if (!localPath.isBlank()) {
             try {
                 return new GeminiDocumentBytes(Files.readAllBytes(Path.of(localPath)), mimeType);
@@ -340,12 +344,21 @@ public class GeminiWorkflowWorkers implements AnnotatedSystemTaskWorker {
             }
         }
 
+        String contentBase64 = stringValue(document.get("contentBase64"));
+        if (!contentBase64.isBlank()) {
+            try {
+                return new GeminiDocumentBytes(Base64.getDecoder().decode(contentBase64), mimeType);
+            } catch (IllegalArgumentException e) {
+                throw new GeminiIntegrationException("Document contentBase64 is invalid", e);
+            }
+        }
+
         String fileId =
                 firstNonBlank(
                         stringValue(document.get("driveFileId")), stringValue(document.get("id")));
         if (fileId.isBlank()) {
             throw new GeminiIntegrationException(
-                    "Document must include localPath, driveFileId, or id");
+                    "Document must include localPath, contentBase64, driveFileId, or id");
         }
         GDriveConnection connection = gDriveConnection(input);
         return new GeminiDocumentBytes(

@@ -38,5 +38,6 @@ export * from "./UnknownTaskForm";
 export * from "./WaitTaskForm";
 export * from "./YieldTaskForm";
 export * from "./ListFilesTaskForm";
+export * from "./ZohoBooksFetchTaskForm";
 export { default as GetSignedJwtForm } from "./GetSignedJwtForm";
 export * from "./ChunkTextTaskForm";

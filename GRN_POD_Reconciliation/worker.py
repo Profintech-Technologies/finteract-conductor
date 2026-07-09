@@ -645,8 +645,10 @@ def write_extracted_csv(path: Path, records: list[dict[str, Any]]) -> None:
 
 def reconcile_documents(input_data: dict[str, Any]) -> dict[str, Any]:
     records = input_data.get("records") or []
-    grn_records = [record for record in records if document_type(record) == "GRN"]
-    pod_records = [record for record in records if document_type(record) == "POD"]
+    grn_records = input_data.get("grnList") or [record for record in records if document_type(record) == "GRN"]
+    pod_records = input_data.get("podList") or [record for record in records if document_type(record) == "POD"]
+    if not records:
+        records = [*grn_records, *pod_records]
     rows = []
     document_matches = []
 
@@ -659,15 +661,18 @@ def reconcile_documents(input_data: dict[str, Any]) -> dict[str, Any]:
             rows.append(reconciliation_row(grn, None, "MISSING_POD", "No POD matched this GRN invoice."))
             continue
 
-        available_pods = [candidate for candidate in available_pods if candidate["driveFileId"] != pod["driveFileId"]]
-        matched_pod_ids.add(pod["driveFileId"])
+        pod_record_key = record_key(pod)
+        consumed_pod_keys = matching_pod_record_keys(available_pods, match_key_value)
+        consumed_pod_keys.add(pod_record_key)
+        available_pods = [candidate for candidate in available_pods if record_key(candidate) not in consumed_pod_keys]
+        matched_pod_ids.update(consumed_pod_keys)
         match = document_match(grn, pod, "MATCHED", match_key_value, match_strategy)
         document_matches.append(match)
         rows.extend(compare_document_counts(grn, pod))
         rows.extend(compare_line_items(grn, pod))
 
     for pod in pod_records:
-        if pod["driveFileId"] not in matched_pod_ids:
+        if record_key(pod) not in matched_pod_ids:
             key, strategy = preferred_document_key(pod)
             document_matches.append(document_match(None, pod, "MISSING_GRN", key, strategy))
             rows.append(reconciliation_row(None, pod, "MISSING_GRN", "No GRN matched this POD invoice."))
@@ -721,12 +726,36 @@ def document_type(record: dict[str, Any]) -> str:
 
 
 def match_key(record: dict[str, Any]) -> str:
-    extracted = record.get("extracted", {})
+    extracted = extracted_payload(record)
     for field in ("invoice_number", "po_number", "reference_number", "document_number"):
         value = normalize(extracted.get(field))
         if value:
             return f"{field}:{value}"
-    return f"file:{record.get('driveFileId')}"
+    key, strategy = preferred_document_key(record)
+    if key:
+        return f"{strategy}:{key}"
+    return f"record:{record_key(record)}"
+
+
+def record_key(record: dict[str, Any]) -> str:
+    for field in (
+        "driveFileId",
+        "document_id",
+        "documentId",
+        "billId",
+        "invoiceId",
+        "bill_id",
+        "invoice_id",
+        "file_name",
+        "name",
+    ):
+        value = record.get(field)
+        if value not in (None, ""):
+            return f"{field}:{value}"
+    key, strategy = preferred_document_key(record)
+    if key:
+        return f"{strategy}:{key}"
+    return str(id(record))
 
 
 def preferred_document_key(record: dict[str, Any]) -> tuple[str, str]:
@@ -761,6 +790,13 @@ def find_matching_pod(
                 value,
                 f"{grn_candidate['field']}={pod_candidate['field']}",
             )
+        if len(matches) > 1:
+            pod, pod_candidate = best_pod_match(matches)
+            return (
+                pod,
+                value,
+                f"{grn_candidate['field']}={pod_candidate['field']}",
+            )
 
     for grn_candidate in grn_candidates:
         value = grn_candidate["digits"]
@@ -778,15 +814,49 @@ def find_matching_pod(
                 value,
                 f"{grn_candidate['field']}_digits={pod_candidate['field']}_digits",
             )
+        if len(matches) > 1:
+            pod, pod_candidate = best_pod_match(matches)
+            return (
+                pod,
+                value,
+                f"{grn_candidate['field']}_digits={pod_candidate['field']}_digits",
+            )
 
     key, strategy = preferred_document_key(grn)
     return None, key, strategy
 
 
+def best_pod_match(
+    matches: list[tuple[dict[str, Any], dict[str, str]]]
+) -> tuple[dict[str, Any], dict[str, str]]:
+    return max(matches, key=lambda match: pod_match_score(match[0]))
+
+
+def pod_match_score(record: dict[str, Any]) -> tuple[int, int, int]:
+    name = normalize(document_name(record))
+    return (
+        1 if line_items(record) else 0,
+        1 if "pod" in name else 0,
+        len(line_items(record)),
+    )
+
+
+def matching_pod_record_keys(pod_records: list[dict[str, Any]], value: str) -> set[str]:
+    if not value:
+        return set()
+    return {
+        record_key(pod)
+        for pod in pod_records
+        if matching_identifier_candidate(pod, "normalized", value)
+        or matching_identifier_candidate(pod, "digits", value)
+    }
+
+
 def document_identifier_candidates(record: dict[str, Any]) -> list[dict[str, str]]:
     # Build a document-level identifier index from every likely identifier field.
     raw_candidates = []
-    collect_identifier_values(record.get("extracted", {}), "", raw_candidates)
+    collect_identifier_values(record, "", raw_candidates)
+    collect_identifier_values(extracted_payload(record), "", raw_candidates)
     collect_identifier_values(
         record.get("classification", {}).get("identifiers", {}),
         "classification",
@@ -915,8 +985,8 @@ def normalize(value: Any) -> str:
 
 def compare_line_items(grn: dict[str, Any], pod: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
-    grn_items = grn.get("extracted", {}).get("line_items") or []
-    pod_items = pod.get("extracted", {}).get("line_items") or []
+    grn_items = line_items(grn)
+    pod_items = line_items(pod)
     pod_by_item_key = {item_key(item): item for item in pod_items}
 
     for grn_item in grn_items:
@@ -964,7 +1034,20 @@ def compare_document_counts(grn: dict[str, Any], pod: dict[str, Any]) -> list[di
 def item_count(record: dict[str, Any] | None) -> int:
     if not record:
         return 0
-    return len(record.get("extracted", {}).get("line_items") or [])
+    return len(line_items(record))
+
+
+def extracted_payload(record: dict[str, Any]) -> dict[str, Any]:
+    extracted = record.get("extracted")
+    if isinstance(extracted, dict) and extracted:
+        return extracted
+    return record
+
+
+def line_items(record: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = extracted_payload(record)
+    items = payload.get("line_items") or payload.get("lineItems") or []
+    return items if isinstance(items, list) else []
 
 
 def document_match(
@@ -984,10 +1067,10 @@ def document_match(
         "matchKey": key,
         "matchStrategy": strategy,
         "itemCountStatus": item_count_status,
-        "grnFile": grn.get("name") if grn else None,
-        "podFile": pod.get("name") if pod else None,
-        "grnInvoiceNumber": grn.get("extracted", {}).get("invoice_number") if grn else None,
-        "podInvoiceNumber": pod.get("extracted", {}).get("invoice_number") if pod else None,
+        "grnFile": document_name(grn) if grn else None,
+        "podFile": document_name(pod) if pod else None,
+        "grnInvoiceNumber": document_invoice_number(grn) if grn else None,
+        "podInvoiceNumber": document_invoice_number(pod) if pod else None,
         "grnItemCount": grn_count,
         "podItemCount": pod_count,
     }
@@ -1001,20 +1084,20 @@ def reconciliation_row(
     grn_item: dict[str, Any] | None = None,
     pod_item: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    grn_extracted = grn.get("extracted", {}) if grn else {}
-    pod_extracted = pod.get("extracted", {}) if pod else {}
+    grn_extracted = extracted_payload(grn) if grn else {}
+    pod_extracted = extracted_payload(pod) if pod else {}
     grn_item = grn_item or {}
     pod_item = pod_item or {}
     return {
         "status": status,
         "note": note,
         "matchKey": match_key(grn or pod),
-        "grnFile": grn.get("name") if grn else None,
-        "podFile": pod.get("name") if pod else None,
+        "grnFile": document_name(grn) if grn else None,
+        "podFile": document_name(pod) if pod else None,
         "grnDocumentNumber": grn_extracted.get("document_number"),
         "podDocumentNumber": pod_extracted.get("document_number"),
         "poNumber": grn_extracted.get("po_number") or pod_extracted.get("po_number"),
-        "invoiceNumber": grn_extracted.get("invoice_number") or pod_extracted.get("invoice_number"),
+        "invoiceNumber": document_invoice_number(grn) or document_invoice_number(pod),
         "itemKey": item_key(grn_item or pod_item),
         "grnDescription": grn_item.get("description"),
         "podDescription": pod_item.get("description"),
@@ -1024,6 +1107,23 @@ def reconciliation_row(
         "grnItemCount": item_count(grn),
         "podItemCount": item_count(pod),
     }
+
+
+def document_name(record: dict[str, Any]) -> str | None:
+    return record.get("name") or record.get("file_name") or record.get("document_name")
+
+
+def document_invoice_number(record: dict[str, Any] | None) -> Any:
+    if not record:
+        return None
+    payload = extracted_payload(record)
+    return (
+        payload.get("invoice_number")
+        or payload.get("invoiceNumber")
+        or payload.get("billNumber")
+        or payload.get("bill_number")
+        or payload.get("reference_number")
+    )
 
 
 def write_reconciliation_csv(path: Path, rows: list[dict[str, Any]]) -> None:

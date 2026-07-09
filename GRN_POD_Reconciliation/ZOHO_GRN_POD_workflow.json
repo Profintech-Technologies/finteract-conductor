@@ -1,0 +1,206 @@
+{
+  "createTime": 1782902186614,
+  "updateTime": 0,
+  "name": "zoho_books_demo",
+  "description": "Read Zoho Books documents, classify attachments, extract GRN/POD data, and reconcile results",
+  "version": 1,
+  "tasks": [
+    {
+      "name": "read_zoho_books",
+      "taskReferenceName": "read_zoho_books_ref",
+      "inputParameters": {
+        "connectionId": "${workflow.input.zohoBooksConnectionId}",
+        "type": "${workflow.input.zohoBooksDocumentType}",
+        "billNumber": "${workflow.input.billNumber}",
+        "billNumbers": "${workflow.input.billNumbers}",
+        "billIds": "${workflow.input.billIds}",
+        "invoiceNumber": "${workflow.input.invoiceNumber}",
+        "invoiceNumbers": "${workflow.input.invoiceNumbers}",
+        "invoiceIds": "${workflow.input.invoiceIds}"
+      },
+      "type": "ZOHO_BOOKS_FETCH",
+      "decisionCases": {},
+      "defaultCase": [],
+      "forkTasks": [],
+      "startDelay": 0,
+      "joinOn": [],
+      "optional": false,
+      "defaultExclusiveJoinTask": [],
+      "asyncComplete": false,
+      "loopOver": [],
+      "onStateChange": {},
+      "permissive": false
+    },
+    {
+      "name": "attachment_classify",
+      "taskReferenceName": "attachment_classify_ref",
+      "inputParameters": {
+        "connectionId": "gemini-default",
+        "model": "gemini-2.5-flash",
+        "jsonOutput": true,
+        "promptname": "attachment_classify",
+        "files": "${read_zoho_books_ref.output.documents}"
+      },
+      "type": "GEMINI_LLM",
+      "decisionCases": {},
+      "defaultCase": [],
+      "forkTasks": [],
+      "startDelay": 0,
+      "joinOn": [],
+      "optional": false,
+      "defaultExclusiveJoinTask": [],
+      "asyncComplete": false,
+      "loopOver": [],
+      "onStateChange": {},
+      "permissive": false
+    },
+    {
+      "name": "extract_by_type",
+      "taskReferenceName": "extract_by_type_ref",
+      "inputParameters": {},
+      "type": "FORK_JOIN",
+      "decisionCases": {},
+      "defaultCase": [],
+      "forkTasks": [
+        [
+          {
+            "name": "extract_grn",
+            "taskReferenceName": "grn_ref",
+            "inputParameters": {
+              "connectionId": "gemini-default",
+              "model": "gemini-2.5-flash",
+              "jsonOutput": true,
+              "promptname": "grn_extraction",
+              "files": "${attachment_classify_ref.output.grnDocuments}"
+            },
+            "type": "GEMINI_LLM",
+            "decisionCases": {},
+            "defaultCase": [],
+            "forkTasks": [],
+            "startDelay": 0,
+            "joinOn": [],
+            "optional": false,
+            "defaultExclusiveJoinTask": [],
+            "asyncComplete": false,
+            "loopOver": [],
+            "onStateChange": {},
+            "permissive": false
+          }
+        ],
+        [
+          {
+            "name": "extract_pod",
+            "taskReferenceName": "pod_ref",
+            "inputParameters": {
+              "connectionId": "gemini-default",
+              "model": "gemini-2.5-flash",
+              "jsonOutput": true,
+              "promptname": "pod_extraction",
+              "files": "${attachment_classify_ref.output.podDocuments}"
+            },
+            "type": "GEMINI_LLM",
+            "decisionCases": {},
+            "defaultCase": [],
+            "forkTasks": [],
+            "startDelay": 0,
+            "joinOn": [],
+            "optional": false,
+            "defaultExclusiveJoinTask": [],
+            "asyncComplete": false,
+            "loopOver": [],
+            "onStateChange": {},
+            "permissive": false
+          }
+        ]
+      ],
+      "startDelay": 0,
+      "joinOn": [],
+      "optional": false,
+      "defaultExclusiveJoinTask": [],
+      "asyncComplete": false,
+      "loopOver": [],
+      "onStateChange": {},
+      "permissive": false
+    },
+    {
+      "name": "join_extractions",
+      "taskReferenceName": "join_extractions_ref",
+      "inputParameters": {},
+      "type": "JOIN",
+      "decisionCases": {},
+      "defaultCase": [],
+      "forkTasks": [],
+      "startDelay": 0,
+      "joinOn": [
+        "grn_ref",
+        "pod_ref"
+      ],
+      "optional": false,
+      "defaultExclusiveJoinTask": [],
+      "asyncComplete": false,
+      "loopOver": [],
+      "onStateChange": {},
+      "permissive": false
+    },
+    {
+      "name": "reconcile",
+      "taskReferenceName": "reconcile_ref",
+      "inputParameters": {
+        "grnRecords": "${grn_ref.output.records}",
+        "podRecords": "${pod_ref.output.records}",
+        "grnList": "${grn_ref.output.records}",
+        "podList": "${pod_ref.output.records}"
+      },
+      "type": "GRN_POD_RECONCILE",
+      "decisionCases": {},
+      "defaultCase": [],
+      "forkTasks": [],
+      "startDelay": 0,
+      "joinOn": [],
+      "optional": false,
+      "defaultExclusiveJoinTask": [],
+      "asyncComplete": false,
+      "loopOver": [],
+      "onStateChange": {},
+      "permissive": false
+    }
+  ],
+  "inputParameters": [
+    "zohoBooksConnectionId",
+    "zohoBooksDocumentType",
+    "billNumber",
+    "billNumbers",
+    "billIds",
+    "invoiceNumber",
+    "invoiceNumbers",
+    "invoiceIds"
+  ],
+  "outputParameters": {
+    "zoho": "${read_zoho_books_ref.output}",
+    "documents": "${read_zoho_books_ref.output.documents}",
+    "classified": "${attachment_classify_ref.output}",
+    "grn": "${grn_ref.output.records}",
+    "pod": "${pod_ref.output.records}",
+    "reconciliation": "${reconcile_ref.output}",
+    "summary": "${reconcile_ref.output.summary}",
+    "documentMatches": "${reconcile_ref.output.documentMatches}",
+    "reconciliationRows": "${reconcile_ref.output.reconciliationRows}"
+  },
+  "schemaVersion": 2,
+  "restartable": true,
+  "workflowStatusListenerEnabled": false,
+  "ownerEmail": "example@email.com",
+  "timeoutPolicy": "ALERT_ONLY",
+  "timeoutSeconds": 0,
+  "variables": {},
+  "inputTemplate": {
+    "zohoBooksDocumentType": "bills",
+    "billNumbers": [],
+    "billIds": [],
+    "invoiceNumbers": [],
+    "invoiceIds": []
+  },
+  "enforceSchema": true,
+  "metadata": {},
+  "maskedFields": []
+}
